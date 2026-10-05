@@ -1,0 +1,19 @@
+# Demo configuration used by `make demo`: built-in rules, the SigmaHQ
+# community rules (fetched by `make sigma`), and an offline demo blocklist.
+listen: "127.0.0.1:8080"
+db: "data/demo.db"
+rules: "rules/default.yaml"
+retention: 24h
+
+sigma:
+  paths:
+    - sigma/rules/web
+    - sigma/rules/linux/builtin/sshd
+    - sigma/rules-emerging-threats
+  min_level: low
+
+threat_intel:
+  refresh: 1h
+  feeds:
+    - name: demo
+      path: intel/demo-blocklist.txt

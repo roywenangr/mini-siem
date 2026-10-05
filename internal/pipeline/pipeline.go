@@ -22,8 +22,15 @@ type Notifier interface {
 	Notify(a *event.Alert)
 }
 
+// Enricher adds context to an event before it is stored and evaluated,
+// such as threat-intel matches.
+type Enricher interface {
+	Enrich(ev *event.Event)
+}
+
 // Options tune the pipeline. Zero values pick sensible defaults.
 type Options struct {
+	Enrichers     []Enricher
 	QueueSize     int           // buffered events before Submit blocks
 	BatchSize     int           // events stored per transaction
 	FlushInterval time.Duration // max wait before a partial batch is stored
@@ -172,6 +179,11 @@ func (p *Pipeline) process(batch []*event.Event) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	for _, ev := range batch {
+		for _, en := range p.opts.Enrichers {
+			en.Enrich(ev)
+		}
+	}
 	sort.SliceStable(batch, func(i, j int) bool { return batch[i].Timestamp.Before(batch[j].Timestamp) })
 	if err := p.store.InsertEvents(ctx, batch); err != nil {
 		p.failures.Add(1)

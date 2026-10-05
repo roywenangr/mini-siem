@@ -8,6 +8,9 @@ const state = {
   eventFilter: {},
   oldestEventId: 0,
   paged: false, // user loaded older events; live updates must not reset the table
+  rules: [],
+  ruleById: new Map(),
+  ruleFilter: { q: "", origin: "" },
   token: readToken(),
 };
 
@@ -87,6 +90,19 @@ function fmtTime(iso, withSeconds = true) {
   const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: withSeconds ? "2-digit" : undefined, hour12: false });
   if (d.toDateString() === today.toDateString()) return time;
   return d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " + time;
+}
+
+function tiBadge(ev) {
+  const lists = ev.fields && ev.fields.ti_lists;
+  if (!lists) return null;
+  return el("span", { class: "badge ti", title: "Listed in threat intel: " + lists }, "▲ TI");
+}
+
+function safeURL(s) {
+  try {
+    const u = new URL(s);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.href : null;
+  } catch { return null; }
 }
 
 function sevBadge(sev) {
@@ -285,7 +301,16 @@ function openAlert(id) {
       ["Last seen", new Date(a.last_seen).toLocaleString()],
       ["Matched events", fmtNum(a.count)],
     ];
+    const rule = state.ruleById.get(a.rule_id);
+    if (rule && rule.origin === "sigma") rows.push(["Source", "Sigma community rule"]);
+    if (rule && rule.tags && rule.tags.length) rows.push(["Tags", rule.tags.join(", ")]);
     for (const [k, v] of rows) meta.append(el("dt", {}, k), el("dd", {}, v));
+    const refs = $("detail-refs");
+    refs.replaceChildren();
+    for (const r of (rule && rule.references) || []) {
+      const href = safeURL(r);
+      if (href) refs.append(el("a", { href, target: "_blank", rel: "noopener noreferrer" }, href));
+    }
     const actions = $("detail-actions");
     actions.replaceChildren();
     if (a.status === "open") actions.append(actionButton(a.id, "acknowledged", "Acknowledge"));
@@ -299,7 +324,7 @@ function openAlert(id) {
     for (const ev of events) {
       tbody.append(el("tr", {},
         el("td", { class: "nowrap" }, fmtTime(ev.timestamp)),
-        el("td", {}, ev.type),
+        el("td", {}, ev.type, tiBadge(ev)),
         el("td", {}, ev.user || "–"),
         el("td", {}, ev.message),
       ));
@@ -326,7 +351,7 @@ async function loadEvents(append = false) {
       el("td", { class: "nowrap" }, fmtTime(ev.timestamp)),
       el("td", {}, ev.source),
       el("td", {}, ev.type),
-      el("td", {}, ev.src_ip ? el("button", { class: "link", type: "button", onclick: () => filterByIP(ev.src_ip) }, ev.src_ip) : "–"),
+      el("td", { class: "nowrap" }, ev.src_ip ? el("button", { class: "link", type: "button", onclick: () => filterByIP(ev.src_ip) }, ev.src_ip) : "–", tiBadge(ev)),
       el("td", {}, ev.user || "–"),
       el("td", {}, ev.message),
     ));
@@ -390,17 +415,76 @@ function describeRule(r) {
 }
 
 async function loadRules() {
-  const { rules } = await api("/api/rules");
+  const { rules, sigma } = await api("/api/rules");
+  state.rules = rules;
+  state.ruleById = new Map(rules.map((r) => [r.id, r]));
+  const active = rules.filter((r) => !r.disabled);
+  const nSigma = active.filter((r) => r.origin === "sigma").length;
+  $("rules-count").textContent = `${active.length} active · ${active.length - nSigma} built-in · ${nSigma} Sigma`;
+  if (sigma) {
+    const skipped = Object.values(sigma.skipped || {}).reduce((x, y) => x + y, 0);
+    $("sigma-report").textContent =
+      `Sigma: ${fmtNum(sigma.loaded)} rules loaded from ${fmtNum(sigma.files)} files. ` +
+      `${fmtNum(skipped)} skipped, mostly rules for log sources this SIEM does not ingest (Windows, cloud, EDR).`;
+  } else {
+    $("sigma-report").textContent = "No Sigma rules loaded. Run `make sigma` and add sigma.paths to the config.";
+  }
+  renderRules();
+}
+
+function renderRules() {
+  const q = state.ruleFilter.q.toLowerCase();
   const body = $("rules");
   body.replaceChildren();
-  $("rules-count").textContent = `${rules.filter((r) => !r.disabled).length} active`;
-  for (const r of rules) {
+  const shown = state.rules.filter((r) => {
+    if (state.ruleFilter.origin && r.origin !== state.ruleFilter.origin) return false;
+    if (!q) return true;
+    return [r.name, r.id, r.description, ...(r.tags || [])].some((x) => x && x.toLowerCase().includes(q));
+  });
+  shown.sort((x, y) => sevRank(y.severity) - sevRank(x.severity) || x.name.localeCompare(y.name));
+  for (const r of shown) {
     body.append(el("tr", {},
       el("td", {}, sevBadge(r.severity)),
-      el("td", {}, el("div", {}, r.name + (r.disabled ? " (disabled)" : "")), el("div", { class: "muted mono" }, r.id)),
+      el("td", {},
+        el("div", {}, r.name + (r.disabled ? " (disabled)" : ""), r.origin === "sigma" ? el("span", { class: "badge sigma" }, "Sigma") : null),
+        el("div", { class: "muted mono" }, r.id)),
       el("td", {}, r.type),
-      el("td", { class: "logic" }, describeRule(r)),
+      el("td", { class: "logic" }, r.logic || describeRule(r)),
       el("td", {}, ...(r.tags || []).map((t) => el("span", { class: "tag" }, t))),
+    ));
+  }
+  if (!shown.length) body.append(el("tr", {}, el("td", { colspan: "5", class: "muted" }, "No rules match.")));
+}
+
+function sevRank(s) {
+  return { low: 1, medium: 2, high: 3, critical: 4 }[s] || 0;
+}
+
+$("rule-search").addEventListener("input", debounce((e) => {
+  state.ruleFilter.q = e.target.value.trim();
+  renderRules();
+}, 150));
+$("rule-origin").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  state.ruleFilter.origin = b.dataset.origin;
+  setPressed($("rule-origin"), "origin", state.ruleFilter.origin);
+  renderRules();
+});
+
+// ---------- threat intel ----------
+
+async function loadIntel() {
+  const { feeds } = await api("/api/intel");
+  const list = $("feeds");
+  list.replaceChildren();
+  $("feeds-empty").hidden = feeds.length > 0;
+  for (const f of feeds) {
+    list.append(el("li", {},
+      el("span", { class: "feed-name" }, f.name),
+      el("span", { class: "count" }, fmtNum(f.entries) + " entries"),
+      el("span", { class: "feed-meta" }, (f.url || f.path) + (f.loaded_at ? " · updated " + fmtTime(f.loaded_at, false) : "")),
+      f.error ? el("span", { class: "feed-err" }, "Last refresh failed: " + f.error) : null,
     ));
   }
 }
@@ -461,8 +545,14 @@ try {
 window.addEventListener("resize", debounce(() => guarded(loadStats), 200));
 
 function refreshAll() {
-  return guarded(() => Promise.all([loadStats(), loadAlerts(), loadEvents(), loadRules()]));
+  // Rules first: alert details look up references and tags in them.
+  return guarded(async () => {
+    await loadRules();
+    await Promise.all([loadStats(), loadAlerts(), loadEvents(), loadIntel()]);
+  });
 }
+
+setInterval(() => guarded(loadIntel), 5 * 60 * 1000);
 
 connectStream();
 refreshAll();

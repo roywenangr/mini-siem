@@ -2,6 +2,7 @@ package rules
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -82,7 +83,7 @@ func (e *Engine) Process(ev *event.Event) []*event.Alert {
 }
 
 func (e *Engine) evalMatch(r *Rule, ev *event.Event) *event.Alert {
-	if !r.Where.Match(ev) {
+	if !r.matches(ev) {
 		return nil
 	}
 	group := groupValue(r, ev)
@@ -94,11 +95,11 @@ func (e *Engine) evalMatch(r *Rule, ev *event.Event) *event.Alert {
 		st.suppressUntil = ev.Timestamp.Add(r.Window)
 		st.lastSeen = ev.Timestamp
 	}
-	return newAlert(r, group, 1, ev.Timestamp, ev.Timestamp, []int64{ev.ID})
+	return newAlert(r, ev, group, 1, ev.Timestamp, ev.Timestamp, []int64{ev.ID})
 }
 
 func (e *Engine) evalThreshold(r *Rule, ev *event.Event) *event.Alert {
-	if !r.Where.Match(ev) {
+	if !r.matches(ev) {
 		return nil
 	}
 	group, ok := ev.Get(r.GroupBy)
@@ -120,14 +121,14 @@ func (e *Engine) evalThreshold(r *Rule, ev *event.Event) *event.Alert {
 	if count < r.Threshold || ev.Timestamp.Before(st.suppressUntil) {
 		return nil
 	}
-	a := newAlert(r, group, count, st.hits[0].ts, ev.Timestamp, st.eventIDs())
+	a := newAlert(r, ev, group, count, st.hits[0].ts, ev.Timestamp, st.eventIDs())
 	st.hits = st.hits[:0]
 	st.suppressUntil = ev.Timestamp.Add(r.Window)
 	return a
 }
 
 func (e *Engine) evalSequence(r *Rule, ev *event.Event) *event.Alert {
-	isFirst, isThen := r.Where.Match(ev), r.Then.Match(ev)
+	isFirst, isThen := r.matches(ev), r.Then.Match(ev)
 	if !isFirst && !isThen {
 		return nil
 	}
@@ -145,7 +146,7 @@ func (e *Engine) evalSequence(r *Rule, ev *event.Event) *event.Alert {
 			st.prune(cutoff)
 			if len(st.hits) >= r.Threshold && !ev.Timestamp.Before(st.suppressUntil) {
 				ids := append(st.eventIDs(), ev.ID)
-				a := newAlert(r, group, len(st.hits), st.hits[0].ts, ev.Timestamp, ids)
+				a := newAlert(r, ev, group, len(st.hits), st.hits[0].ts, ev.Timestamp, ids)
 				st.hits = st.hits[:0]
 				st.suppressUntil = ev.Timestamp.Add(r.Window)
 				return a
@@ -248,14 +249,14 @@ func groupValue(r *Rule, ev *event.Event) string {
 	return v
 }
 
-func newAlert(r *Rule, group string, count int, first, last time.Time, ids []int64) *event.Alert {
+func newAlert(r *Rule, ev *event.Event, group string, count int, first, last time.Time, ids []int64) *event.Alert {
 	return &event.Alert{
 		RuleID:      r.ID,
 		RuleName:    r.Name,
 		Severity:    r.Severity,
 		GroupKey:    group,
 		Count:       count,
-		Description: describe(r, group, count),
+		Description: describe(r, ev, group, count),
 		FirstSeen:   first,
 		LastSeen:    last,
 		EventIDs:    ids,
@@ -263,19 +264,27 @@ func newAlert(r *Rule, group string, count int, first, last time.Time, ids []int
 	}
 }
 
+var eventPlaceholder = regexp.MustCompile(`\{event\.([a-zA-Z0-9_.]+)\}`)
+
 // describe fills the {group}, {count}, {window} and {threshold} placeholders
-// in the rule description.
-func describe(r *Rule, group string, count int) string {
+// in the rule description, and {event.<field>} from the event that fired it.
+func describe(r *Rule, ev *event.Event, group string, count int) string {
 	if r.Description == "" {
 		if group == "" {
 			return r.Name
 		}
 		return fmt.Sprintf("%s: %s", r.Name, group)
 	}
-	return strings.NewReplacer(
+	s := strings.NewReplacer(
 		"{group}", group,
 		"{count}", fmt.Sprint(count),
 		"{window}", r.Window.String(),
 		"{threshold}", fmt.Sprint(r.Threshold),
 	).Replace(r.Description)
+	s = eventPlaceholder.ReplaceAllStringFunc(s, func(m string) string {
+		v, _ := ev.Get(eventPlaceholder.FindStringSubmatch(m)[1])
+		return v
+	})
+	// Templates such as "{group}: ..." read oddly when there is no group.
+	return strings.TrimPrefix(s, ": ")
 }

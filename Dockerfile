@@ -10,6 +10,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
 COPY --from=build /out/siem /out/loggen /app/
 COPY rules /app/rules
+COPY intel /app/intel
 EXPOSE 8080
 VOLUME /app/data
 ENTRYPOINT ["/app/siem", "-listen", "0.0.0.0:8080"]

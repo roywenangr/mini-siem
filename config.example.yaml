@@ -16,6 +16,32 @@ inputs:
   #   parser: json
   #   from_start: true              # also read what is already in the file
 
+# Sigma community rules (https://github.com/SigmaHQ/sigma). Run `make sigma`
+# to download them into ./sigma. Rules for log sources mini-siem does not
+# parse (Windows, cloud, ...) are skipped automatically.
+sigma:
+  paths:
+    - sigma/rules/web
+    - sigma/rules/linux/builtin/sshd
+    - sigma/rules-emerging-threats
+  min_level: medium        # low | medium | high | critical
+  include_proxy: false     # also apply proxy-log rules (user agents) to web logs
+  dedup_window: 10m        # one alert per rule per source IP in this window
+
+# IP blocklists. Events from listed public IPs get fields.ti_lists and fire
+# the threat-intel-ip rule. Private/internal addresses are never matched.
+threat_intel:
+  refresh: 6h
+  feeds:
+    - name: firehol_level1
+      url: https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset
+    - name: spamhaus_drop
+      url: https://www.spamhaus.org/drop/drop.txt
+    - name: feodo
+      url: https://feodotracker.abuse.ch/downloads/ipblocklist.txt
+    # - name: my_list
+    #   path: intel/my-blocklist.txt
+
 # Optional: POST alerts as JSON (Slack/Discord-compatible "text" field included).
 webhook:
   url: ""

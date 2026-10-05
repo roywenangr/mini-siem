@@ -8,11 +8,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/roywenangr/mini-siem/internal/event"
+	"github.com/roywenangr/mini-siem/internal/intel"
 	"github.com/roywenangr/mini-siem/internal/pipeline"
 	"github.com/roywenangr/mini-siem/internal/rules"
 	"github.com/roywenangr/mini-siem/internal/store"
@@ -26,6 +29,11 @@ type harness struct {
 
 func newHarness(t *testing.T, token string) *harness {
 	t.Helper()
+	return newHarnessWith(t, token, nil)
+}
+
+func newHarnessWith(t *testing.T, token string, ti *intel.Intel) *harness {
+	t.Helper()
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -36,12 +44,16 @@ func newHarness(t *testing.T, token string) *harness {
 	}
 	eng := rules.NewEngine(rs)
 	hub := pipeline.NewHub()
-	pipe := pipeline.New(st, eng, hub, nil, pipeline.Options{FlushInterval: 10 * time.Millisecond})
+	opts := pipeline.Options{FlushInterval: 10 * time.Millisecond}
+	if ti != nil {
+		opts.Enrichers = []pipeline.Enricher{ti}
+	}
+	pipe := pipeline.New(st, eng, hub, nil, opts)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { pipe.Run(ctx); close(done) }()
 
-	s := &Server{Store: st, Pipeline: pipe, Engine: eng, Hub: hub, Token: token}
+	s := &Server{Store: st, Pipeline: pipe, Engine: eng, Hub: hub, Token: token, Intel: ti}
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(func() {
 		hub.Close()
@@ -259,5 +271,45 @@ func TestStreamDeliversAlerts(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("no alert on stream")
+	}
+}
+
+func TestThreatIntelEnrichmentRaisesAlert(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bad.txt")
+	if err := os.WriteFile(path, []byte("203.0.113.0/24\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ti, err := intel.New([]intel.Feed{{Name: "testfeed", Path: path}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ti.Refresh(context.Background())
+	h := newHarnessWith(t, "", ti)
+
+	line := `203.0.113.44 - - [` + time.Now().UTC().Format("02/Jan/2006:15:04:05 -0700") + `] "GET / HTTP/1.1" 200 10 "-" "x"`
+	h.do("POST", "/api/ingest?parser=nginx", line+"\n")
+	alerts := h.waitAlerts(1)
+	a := alerts[0].(map[string]any)
+	if a["rule_id"] != "threat-intel-ip" || a["description"] != "203.0.113.44 is listed in threat intel feeds: testfeed" {
+		t.Fatalf("alert %v", a)
+	}
+
+	_, out := h.do("GET", "/api/events?src_ip=203.0.113.44", "")
+	ev := out["events"].([]any)[0].(map[string]any)
+	if ev["fields"].(map[string]any)["ti_lists"] != "testfeed" {
+		t.Errorf("event not enriched: %v", ev)
+	}
+	_, out = h.do("GET", "/api/intel", "")
+	feeds := out["feeds"].([]any)
+	if len(feeds) != 1 || feeds[0].(map[string]any)["entries"].(float64) != 1 {
+		t.Errorf("feeds %v", feeds)
+	}
+}
+
+func TestIntelEndpointWithoutFeeds(t *testing.T) {
+	h := newHarness(t, "")
+	code, out := h.do("GET", "/api/intel", "")
+	if code != 200 || len(out["feeds"].([]any)) != 0 {
+		t.Errorf("got %d %v", code, out)
 	}
 }

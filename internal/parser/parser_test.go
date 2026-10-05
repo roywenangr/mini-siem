@@ -86,11 +86,22 @@ func TestNginx(t *testing.T) {
 	if ev.SrcIP != "203.0.113.9" || ev.Fields["path"] != "/.env" || ev.Fields["status"] != "404" || ev.Fields["method"] != "GET" {
 		t.Errorf("unexpected event: %+v", ev)
 	}
+	if ev.Fields["uri_stem"] != "/.env" || ev.Fields["uri_query"] != "" {
+		t.Errorf("uri split: %v", ev.Fields)
+	}
 	if ev.Fields["user_agent"] != "curl/8.0" {
 		t.Errorf("user_agent = %q", ev.Fields["user_agent"])
 	}
 	if want := time.Date(2026, 10, 5, 4, 46, 38, 0, time.UTC); !ev.Timestamp.Equal(want) {
 		t.Errorf("timestamp = %v, want %v", ev.Timestamp, want)
+	}
+
+	ev, err = Nginx{}.Parse(`1.2.3.4 - - [05/Oct/2026:11:46:38 +0000] "GET /app/login.php?next=/a.b HTTP/1.1" 200 1 "-" "-"`, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ev.Fields["uri_stem"] != "/app/login.php" || ev.Fields["uri_query"] != "next=/a.b" || ev.Fields["uri_extension"] != "php" {
+		t.Errorf("uri split: %v", ev.Fields)
 	}
 
 	// Scanners send malformed request lines; they must still parse.

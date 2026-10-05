@@ -1,0 +1,7 @@
+# Demo blocklist for loggen's simulated attackers.
+# These are RFC 5737 documentation ranges, not real malicious networks.
+# Replace with real feeds in config.yaml (see config.example.yaml).
+203.0.113.0/25
+198.51.100.128/25
+192.0.2.66
+192.0.2.99

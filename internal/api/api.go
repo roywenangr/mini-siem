@@ -17,9 +17,11 @@ import (
 
 	"github.com/roywenangr/mini-siem/internal/event"
 	"github.com/roywenangr/mini-siem/internal/ingest"
+	"github.com/roywenangr/mini-siem/internal/intel"
 	"github.com/roywenangr/mini-siem/internal/parser"
 	"github.com/roywenangr/mini-siem/internal/pipeline"
 	"github.com/roywenangr/mini-siem/internal/rules"
+	"github.com/roywenangr/mini-siem/internal/sigma"
 	"github.com/roywenangr/mini-siem/internal/store"
 )
 
@@ -35,6 +37,10 @@ type Server struct {
 	Pipeline *pipeline.Pipeline
 	Engine   *rules.Engine
 	Hub      *pipeline.Hub
+	// Intel is optional; nil means no threat-intel feeds are configured.
+	Intel *intel.Intel
+	// SigmaReport is the result of loading Sigma rules, if any were.
+	SigmaReport *sigma.Report
 	// Token, when set, is required as "Authorization: Bearer <token>" (or
 	// ?token= for the event stream, which browsers cannot add headers to)
 	// on every /api route.
@@ -60,6 +66,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/alerts/{id}", s.auth(s.handleAlertUpdate))
 	mux.HandleFunc("GET /api/stats", s.auth(s.handleStats))
 	mux.HandleFunc("GET /api/rules", s.auth(s.handleRules))
+	mux.HandleFunc("GET /api/intel", s.auth(s.handleIntel))
 	mux.HandleFunc("GET /api/stream", s.auth(s.handleStream))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "pipeline": s.Pipeline.Counters()})
@@ -279,7 +286,15 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"rules": s.Engine.Rules()})
+	writeJSON(w, http.StatusOK, map[string]any{"rules": s.Engine.Rules(), "sigma": s.SigmaReport})
+}
+
+func (s *Server) handleIntel(w http.ResponseWriter, r *http.Request) {
+	feeds := []intel.FeedStatus{}
+	if s.Intel != nil {
+		feeds = s.Intel.Status()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"feeds": feeds})
 }
 
 // handleStream is a Server-Sent Events feed of new alerts and event counts.

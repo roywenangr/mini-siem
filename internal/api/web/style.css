@@ -169,6 +169,23 @@ main { max-width: 1280px; margin: 0 auto; padding: 20px 24px 48px; display: grid
 .toplist .count { font-variant-numeric: tabular-nums; color: var(--text-2); font-size: 12px; }
 .flag { font-size: 11px; color: var(--sev-critical); margin-left: 6px; font-family: system-ui, sans-serif; }
 
+.stack { display: grid; gap: 16px; align-content: start; min-width: 0; }
+.feeds { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.feeds li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0 8px; }
+.feeds .feed-name { font-weight: 600; overflow-wrap: anywhere; }
+.feeds .feed-meta { grid-column: 1 / -1; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.feeds .feed-err { grid-column: 1 / -1; color: var(--sev-critical); font-size: 12px; }
+.feeds .count { font-variant-numeric: tabular-nums; color: var(--text-2); font-size: 12px; }
+.badge {
+  display: inline-block; font-size: 11px; font-weight: 600; border-radius: 4px; padding: 0 6px; margin-left: 6px;
+  border: 1px solid var(--border); color: var(--text-2); vertical-align: 1px; white-space: nowrap;
+}
+.badge.sigma { border-color: var(--accent); color: var(--accent); }
+.badge.ti { border-color: var(--sev-critical); color: var(--sev-critical); font-family: system-ui, sans-serif; }
+.rule-filters { margin-bottom: 8px; }
+.rule-filters input { width: 260px; }
+.refs { display: grid; gap: 2px; font-size: 12px; margin-bottom: 4px; }
+.refs a { color: var(--accent); overflow-wrap: anywhere; }
 .filters { display: flex; gap: 6px; flex-wrap: wrap; }
 .filters input { width: 150px; }
 .more { display: flex; justify-content: center; margin-top: 10px; }

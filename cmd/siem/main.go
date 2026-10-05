@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -22,9 +23,11 @@ import (
 
 	"github.com/roywenangr/mini-siem/internal/api"
 	"github.com/roywenangr/mini-siem/internal/ingest"
+	"github.com/roywenangr/mini-siem/internal/intel"
 	"github.com/roywenangr/mini-siem/internal/parser"
 	"github.com/roywenangr/mini-siem/internal/pipeline"
 	"github.com/roywenangr/mini-siem/internal/rules"
+	"github.com/roywenangr/mini-siem/internal/sigma"
 	"github.com/roywenangr/mini-siem/internal/store"
 )
 
@@ -40,6 +43,16 @@ type Config struct {
 		URL         string `yaml:"url"`
 		MinSeverity string `yaml:"min_severity"`
 	} `yaml:"webhook"`
+	Sigma struct {
+		Paths        []string      `yaml:"paths"`
+		MinLevel     string        `yaml:"min_level"`
+		IncludeProxy bool          `yaml:"include_proxy"`
+		DedupWindow  time.Duration `yaml:"dedup_window"`
+	} `yaml:"sigma"`
+	ThreatIntel struct {
+		Refresh time.Duration `yaml:"refresh"`
+		Feeds   []intel.Feed  `yaml:"feeds"`
+	} `yaml:"threat_intel"`
 	LogLevel string `yaml:"log_level"`
 }
 
@@ -89,6 +102,7 @@ func run() error {
 	listen := flag.String("listen", "", "override listen address")
 	dbPath := flag.String("db", "", "override database path")
 	rulesPath := flag.String("rules", "", "override rules file")
+	sigmaPaths := flag.String("sigma", "", "comma-separated Sigma rule files or directories to load (adds to config)")
 	flag.Parse()
 
 	cfg, err := loadConfig(*configPath)
@@ -103,6 +117,9 @@ func run() error {
 	}
 	if *rulesPath != "" {
 		cfg.Rules = *rulesPath
+	}
+	if *sigmaPaths != "" {
+		cfg.Sigma.Paths = append(cfg.Sigma.Paths, strings.Split(*sigmaPaths, ",")...)
 	}
 	if tok := os.Getenv("SIEM_TOKEN"); tok != "" {
 		cfg.AuthToken = tok
@@ -119,6 +136,24 @@ func run() error {
 		return err
 	}
 	log.Info("rules loaded", "file", cfg.Rules, "count", len(rs))
+
+	var sigmaReport *sigma.Report
+	if len(cfg.Sigma.Paths) > 0 {
+		srs, rep, err := sigma.LoadPaths(cfg.Sigma.Paths, sigma.Options{
+			DedupWindow:  cfg.Sigma.DedupWindow,
+			MinLevel:     cfg.Sigma.MinLevel,
+			IncludeProxy: cfg.Sigma.IncludeProxy,
+		})
+		if err != nil {
+			return err
+		}
+		for _, e := range rep.Errors {
+			log.Warn("sigma rule skipped", "err", e)
+		}
+		log.Info("sigma rules loaded", "loaded", rep.Loaded, "files", rep.Files, "skipped", rep.Skipped)
+		rs = append(rs, srs...)
+		sigmaReport = rep
+	}
 
 	if dir := filepath.Dir(cfg.DB); dir != "." {
 		if err := os.MkdirAll(dir, 0o750); err != nil {
@@ -141,12 +176,29 @@ func run() error {
 		log.Info("webhook notifications enabled", "min_severity", cfg.Webhook.MinSeverity)
 	}
 
-	engine := rules.NewEngine(rs)
-	hub := pipeline.NewHub()
-	pipe := pipeline.New(st, engine, hub, log, pipeline.Options{Retention: cfg.Retention}, notifiers...)
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	var ti *intel.Intel
+	var enrichers []pipeline.Enricher
+	if len(cfg.ThreatIntel.Feeds) > 0 {
+		if ti, err = intel.New(cfg.ThreatIntel.Feeds, log); err != nil {
+			return err
+		}
+		// Load once before ingesting so the first events are already
+		// checked, then keep refreshing in the background.
+		ti.Refresh(ctx)
+		refresh := cfg.ThreatIntel.Refresh
+		if refresh == 0 {
+			refresh = 6 * time.Hour
+		}
+		go ti.Run(ctx, refresh)
+		enrichers = append(enrichers, ti)
+	}
+
+	engine := rules.NewEngine(rs)
+	hub := pipeline.NewHub()
+	pipe := pipeline.New(st, engine, hub, log, pipeline.Options{Retention: cfg.Retention, Enrichers: enrichers}, notifiers...)
 
 	var wg sync.WaitGroup
 	pipeCtx, stopPipe := context.WithCancel(context.Background())
@@ -172,6 +224,7 @@ func run() error {
 		Addr: cfg.Listen,
 		Handler: (&api.Server{
 			Store: st, Pipeline: pipe, Engine: engine, Hub: hub,
+			Intel: ti, SigmaReport: sigmaReport,
 			Token: cfg.AuthToken, Log: log,
 		}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,

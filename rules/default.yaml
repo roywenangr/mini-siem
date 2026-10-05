@@ -135,3 +135,14 @@ rules:
     threshold: 10
     window: 1m
     tags: [web, availability]
+
+  - id: threat-intel-ip
+    name: Traffic from a known-malicious IP
+    description: "{group} is listed in threat intel feeds: {event.ti_lists}"
+    severity: high
+    type: match
+    where:
+      fields.ti_lists: {exists: true}
+    group_by: src_ip
+    window: 1h
+    tags: [threat-intel]

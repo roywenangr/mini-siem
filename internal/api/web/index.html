@@ -63,11 +63,18 @@
       <p class="empty" id="alerts-empty" hidden>No alerts here. Detections show up as they fire.</p>
     </section>
 
-    <section class="card">
-      <div class="card-head"><h2>Top source IPs</h2></div>
-      <ol class="toplist" id="top-ips"></ol>
-      <p class="empty" id="top-empty" hidden>No traffic in this range.</p>
-    </section>
+    <div class="stack">
+      <section class="card">
+        <div class="card-head"><h2>Top source IPs</h2></div>
+        <ol class="toplist" id="top-ips"></ol>
+        <p class="empty" id="top-empty" hidden>No traffic in this range.</p>
+      </section>
+      <section class="card">
+        <div class="card-head"><h2>Threat intel feeds</h2></div>
+        <ul class="feeds" id="feeds"></ul>
+        <p class="empty" id="feeds-empty" hidden>No feeds configured. Add some under threat_intel in the config.</p>
+      </section>
+    </div>
   </div>
 
   <section class="card">
@@ -100,6 +107,15 @@
   <section class="card">
     <details>
       <summary><h2>Detection rules</h2><span class="muted" id="rules-count"></span></summary>
+      <div class="filters rule-filters">
+        <input id="rule-search" type="search" placeholder="Search rules, CVEs, tags" aria-label="Search rules">
+        <div class="segmented small" role="group" aria-label="Rule origin" id="rule-origin">
+          <button data-origin="" aria-pressed="true">All</button>
+          <button data-origin="builtin">Built-in</button>
+          <button data-origin="sigma">Sigma</button>
+        </div>
+      </div>
+      <p class="muted" id="sigma-report"></p>
       <div class="table-wrap">
         <table class="table">
           <thead><tr><th>Severity</th><th>Rule</th><th>Type</th><th>Logic</th><th>Tags</th></tr></thead>
@@ -117,6 +133,7 @@
   </div>
   <p id="detail-desc"></p>
   <dl class="meta" id="detail-meta"></dl>
+  <div id="detail-refs" class="refs"></div>
   <div class="detail-actions" id="detail-actions"></div>
   <h3>Triggering events</h3>
   <div class="table-wrap">

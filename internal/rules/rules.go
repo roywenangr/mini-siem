@@ -42,6 +42,29 @@ type Rule struct {
 	Threshold   int           `yaml:"threshold" json:"threshold,omitempty"`
 	Window      time.Duration `yaml:"window" json:"-"`
 	Tags        []string      `yaml:"tags" json:"tags,omitempty"`
+
+	// The fields below are set by rule importers (such as the Sigma
+	// compiler) rather than written in the rules file.
+
+	// Origin says where the rule came from: "builtin" or "sigma".
+	Origin string `yaml:"-" json:"origin"`
+	// Predicate, when set, replaces Where as the rule's event filter. It
+	// lets importers express arbitrary boolean logic.
+	Predicate func(*event.Event) bool `yaml:"-" json:"-"`
+	// Logic is a human-readable rendering of Predicate for the dashboard.
+	Logic string `yaml:"-" json:"logic,omitempty"`
+	// References are URLs with background on the detection.
+	References []string `yaml:"-" json:"references,omitempty"`
+	// Source is the file the rule was loaded from.
+	Source string `yaml:"-" json:"source,omitempty"`
+}
+
+// matches reports whether ev passes the rule's event filter.
+func (r *Rule) matches(ev *event.Event) bool {
+	if r.Predicate != nil {
+		return r.Predicate(ev)
+	}
+	return r.Where.Match(ev)
 }
 
 // MarshalJSON renders Window as a duration string ("1m0s") rather than
@@ -80,7 +103,8 @@ func Parse(data []byte) ([]*Rule, error) {
 	}
 	seen := map[string]bool{}
 	for i, r := range f.Rules {
-		if err := r.validate(); err != nil {
+		r.Origin = "builtin"
+		if err := r.Validate(); err != nil {
 			return nil, fmt.Errorf("rules[%d] %q: %w", i, r.ID, err)
 		}
 		if seen[r.ID] {
@@ -91,7 +115,9 @@ func Parse(data []byte) ([]*Rule, error) {
 	return f.Rules, nil
 }
 
-func (r *Rule) validate() error {
+// Validate checks the rule and compiles its matchers. Parse calls it for
+// rules read from YAML; importers that build rules in code must call it too.
+func (r *Rule) Validate() error {
 	if r.ID == "" {
 		return fmt.Errorf("id is required")
 	}
