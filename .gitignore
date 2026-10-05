@@ -1,0 +1,7 @@
+/data/
+/siem
+/loggen
+/config.yaml
+*.db
+*.db-shm
+*.db-wal

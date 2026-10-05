@@ -1,0 +1,137 @@
+# Default detection rules for mini-siem.
+#
+# Rule types:
+#   match      fires on a single event matching `where`. With `window` set,
+#              repeats for the same `group_by` value are suppressed for that long.
+#   threshold  fires when `threshold` events matching `where` share a `group_by`
+#              value within `window`. With `distinct`, counts distinct values of
+#              that field instead (e.g. distinct usernames tried from one IP).
+#   sequence   fires when an event matching `then` follows at least `threshold`
+#              events matching `where` for the same `group_by` value in `window`.
+#
+# Matchers: a plain value means equals. Otherwise use one or more of
+#   equals, not, in, not_in, contains, prefix, regex, gte, lte, exists.
+# Field names: type, source, host, src_ip, user, message, or fields.<name>.
+# Description placeholders: {group} {count} {window} {threshold}.
+
+rules:
+  - id: ssh-bruteforce
+    name: SSH brute force
+    description: "{count} failed SSH logins from {group} within {window}"
+    severity: high
+    type: threshold
+    where:
+      source: ssh
+      type: {in: [auth_failure, invalid_user]}
+    group_by: src_ip
+    threshold: 5
+    window: 1m
+    tags: [ssh, credential-access, T1110.001]
+
+  - id: ssh-password-spray
+    name: SSH password spraying
+    description: "{group} tried {count} different usernames within {window}"
+    severity: high
+    type: threshold
+    where:
+      source: ssh
+      type: {in: [auth_failure, invalid_user]}
+    group_by: src_ip
+    distinct: user
+    threshold: 4
+    window: 5m
+    tags: [ssh, credential-access, T1110.003]
+
+  - id: ssh-success-after-bruteforce
+    name: SSH login succeeded after brute force
+    description: "{group} logged in successfully after {count} failed attempts; the account may be compromised"
+    severity: critical
+    type: sequence
+    where:
+      source: ssh
+      type: auth_failure
+    then:
+      source: ssh
+      type: auth_success
+    group_by: src_ip
+    threshold: 3
+    window: 10m
+    tags: [ssh, initial-access, T1078]
+
+  - id: ssh-root-login
+    name: Successful SSH login as root
+    description: "root logged in over SSH from {group}"
+    severity: medium
+    type: match
+    where:
+      source: ssh
+      type: auth_success
+      user: root
+    group_by: src_ip
+    window: 1h
+    tags: [ssh, privilege]
+
+  - id: web-scan
+    name: Web vulnerability scan
+    description: "{group} triggered {count} client errors within {window}"
+    severity: medium
+    type: threshold
+    where:
+      source: nginx
+      fields.status: {regex: '^4\d\d$'}
+    group_by: src_ip
+    threshold: 20
+    window: 1m
+    tags: [web, discovery, T1595.002]
+
+  - id: web-sensitive-file
+    name: Probe for sensitive files
+    description: "{group} requested a sensitive path"
+    severity: medium
+    type: match
+    where:
+      source: nginx
+      fields.path: {regex: '(?i)(/\.env|/\.git/|/\.aws/|/wp-config\.php|/etc/passwd|/\.ssh/|/server-status|/phpinfo\.php)'}
+    group_by: src_ip
+    window: 10m
+    tags: [web, discovery]
+
+  - id: web-injection-attempt
+    name: Injection attempt in URL
+    description: "{group} sent a request that looks like SQL injection, XSS or path traversal"
+    severity: high
+    type: match
+    where:
+      source: nginx
+      message: {regex: "(?i)(union(\\s|%20|\\+)+select|'(\\s|%20)*or(\\s|%20)+'?1'?='?1|<script|%3cscript|\\.\\./\\.\\./|%2e%2e%2f|sleep\\(\\d+\\)|benchmark\\()"}
+    group_by: src_ip
+    window: 10m
+    tags: [web, initial-access, T1190]
+
+  - id: web-auth-bruteforce
+    name: Web login brute force
+    description: "{count} rejected logins from {group} within {window}"
+    severity: high
+    type: threshold
+    where:
+      source: nginx
+      fields.method: POST
+      fields.path: {regex: '(?i)(login|signin|wp-login\.php|auth)'}
+      fields.status: {in: ["401", "403"]}
+    group_by: src_ip
+    threshold: 10
+    window: 2m
+    tags: [web, credential-access, T1110]
+
+  - id: web-server-errors
+    name: Spike in server errors
+    description: "{count} HTTP 5xx responses from {group} requests within {window}"
+    severity: low
+    type: threshold
+    where:
+      source: nginx
+      fields.status: {gte: 500, lte: 599}
+    group_by: src_ip
+    threshold: 10
+    window: 1m
+    tags: [web, availability]

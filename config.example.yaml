@@ -1,0 +1,22 @@
+# Copy to config.yaml and run: ./siem -config config.yaml
+listen: "127.0.0.1:8080"   # keep on loopback unless auth_token is set
+db: "data/siem.db"
+rules: "rules/default.yaml"
+# auth_token: "change-me"  # or set the SIEM_TOKEN environment variable
+retention: 168h            # delete events older than 7 days (0 keeps forever)
+log_level: info
+
+# Log files to follow (like tail -F; rotation and truncation are handled).
+inputs:
+  - path: /var/log/auth.log         # Debian/Ubuntu; /var/log/secure on RHEL
+    parser: ssh
+  - path: /var/log/nginx/access.log
+    parser: nginx
+  # - path: /var/log/myapp/events.jsonl
+  #   parser: json
+  #   from_start: true              # also read what is already in the file
+
+# Optional: POST alerts as JSON (Slack/Discord-compatible "text" field included).
+webhook:
+  url: ""
+  min_severity: high

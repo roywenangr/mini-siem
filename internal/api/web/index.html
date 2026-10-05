@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mini SIEM</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1 2 3.5v4C2 11 4.6 14 8 15c3.4-1 6-4 6-7.5v-4z' fill='%232a78d6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1 2 3.5v4C2 11 4.6 14 8 15c3.4-1 6-4 6-7.5v-4z"/></svg>
+    <span>Mini SIEM</span>
+  </div>
+  <div class="controls">
+    <span id="live" class="live" data-state="connecting"><span class="dot"></span><span id="live-label">Connecting</span></span>
+    <div class="segmented" role="group" aria-label="Time range" id="range">
+      <button data-range="15m">15m</button>
+      <button data-range="1h" aria-pressed="true">1h</button>
+      <button data-range="6h">6h</button>
+      <button data-range="24h">24h</button>
+    </div>
+    <button id="theme" class="ghost" title="Toggle theme" aria-label="Toggle theme">◐</button>
+  </div>
+</header>
+
+<main>
+  <section class="tiles" aria-label="Summary">
+    <div class="tile"><div class="tile-label">Events in range</div><div class="tile-value" id="t-events">–</div></div>
+    <div class="tile"><div class="tile-label">Open alerts</div><div class="tile-value" id="t-open">–</div></div>
+    <div class="tile"><div class="tile-label">Open high + critical</div><div class="tile-value" id="t-high">–</div></div>
+    <div class="tile"><div class="tile-label">Events stored</div><div class="tile-value" id="t-total">–</div></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Events over time</h2>
+      <span class="muted" id="chart-note"></span>
+    </div>
+    <div id="chart" class="chart" role="img" aria-label="Events per interval"></div>
+    <div id="tooltip" class="tooltip" hidden></div>
+  </section>
+
+  <div class="grid">
+    <section class="card alerts-card">
+      <div class="card-head">
+        <h2>Alerts</h2>
+        <div class="segmented small" role="group" aria-label="Alert status" id="alert-status">
+          <button data-status="open" aria-pressed="true">Open</button>
+          <button data-status="acknowledged">Acknowledged</button>
+          <button data-status="closed">Closed</button>
+          <button data-status="">All</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>Severity</th><th>Rule</th><th>Source</th><th class="num">Count</th><th>Last seen</th><th></th></tr></thead>
+          <tbody id="alerts"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="alerts-empty" hidden>No alerts here. Detections show up as they fire.</p>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Top source IPs</h2></div>
+      <ol class="toplist" id="top-ips"></ol>
+      <p class="empty" id="top-empty" hidden>No traffic in this range.</p>
+    </section>
+  </div>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Events</h2>
+      <form class="filters" id="event-filters">
+        <select name="type" aria-label="Event type">
+          <option value="">All types</option>
+          <option>auth_failure</option>
+          <option>auth_success</option>
+          <option>invalid_user</option>
+          <option>http_request</option>
+          <option>generic</option>
+        </select>
+        <input name="src_ip" placeholder="Source IP" aria-label="Source IP">
+        <input name="q" placeholder="Search message" aria-label="Search message">
+        <button type="submit">Filter</button>
+        <button type="reset" class="ghost">Clear</button>
+      </form>
+    </div>
+    <div class="table-wrap">
+      <table class="table events">
+        <thead><tr><th>Time</th><th>Source</th><th>Type</th><th>Source IP</th><th>User</th><th>Message</th></tr></thead>
+        <tbody id="events"></tbody>
+      </table>
+    </div>
+    <div class="more"><button id="more" class="ghost" hidden>Load older events</button></div>
+  </section>
+
+  <section class="card">
+    <details>
+      <summary><h2>Detection rules</h2><span class="muted" id="rules-count"></span></summary>
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>Severity</th><th>Rule</th><th>Type</th><th>Logic</th><th>Tags</th></tr></thead>
+          <tbody id="rules"></tbody>
+        </table>
+      </div>
+    </details>
+  </section>
+</main>
+
+<dialog id="detail">
+  <div class="dialog-head">
+    <h2 id="detail-title"></h2>
+    <button class="ghost" id="detail-close" aria-label="Close">✕</button>
+  </div>
+  <p id="detail-desc"></p>
+  <dl class="meta" id="detail-meta"></dl>
+  <div class="detail-actions" id="detail-actions"></div>
+  <h3>Triggering events</h3>
+  <div class="table-wrap">
+    <table class="table events">
+      <thead><tr><th>Time</th><th>Type</th><th>User</th><th>Message</th></tr></thead>
+      <tbody id="detail-events"></tbody>
+    </table>
+  </div>
+</dialog>
+
+<dialog id="login">
+  <form method="dialog" id="login-form">
+    <h2>API token required</h2>
+    <p class="muted">This server was started with an auth token. Enter it to view the dashboard.</p>
+    <input type="password" name="token" autocomplete="current-password" aria-label="Token" required>
+    <div class="detail-actions"><button type="submit">Continue</button></div>
+  </form>
+</dialog>
+</body>
+</html>
